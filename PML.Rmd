@@ -1,0 +1,148 @@
+---
+title: "Practical Machine Learning"
+author: "Davide Liperoti"
+date: "03 luglio 2015"
+output: html_document
+---
+
+# Brief background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, my goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+
+
+# Code
+
+## Loading packets and data
+For this analysis I'll need to load basic packages as follow:
+
+```{r}
+library(caret)
+library(ggplot2)
+library(randomForest)
+library(rpart)
+library(rpart.plot)
+library(rattle)
+
+# parallel processing
+library(doParallel)
+registerDoParallel(cores=2)
+```
+
+As described above, data consist in two different files, one is training dataset and it is available here [https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv]. Instead testing dataset is available here [https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv].
+
+Loading the training dataset, we discover that it is made by 19622 measures and 160 variables.
+In the training dataset there are many missing value, coded as *NA*, *#DIV/0!* or blank space.
+
+```{r}
+# to check the presence of the NA, #DIV/0! characters and empty cells
+# for (i in 1:160){print(table(grepl("#DIV/0", train[, i]))); print(i) }
+
+if(!exists("training") && !exists("testing"))
+    {
+    training <- read.csv(file = "pml-training.csv", na.strings = c("NA","#DIV/0!", ""))
+    testing <- read.csv(file = "pml-testing.csv", na.strings = c("NA","#DIV/0!", ""))
+}
+
+# useless first 7 columns
+training <- training[, -c(1:7)]
+testing <- testing[, -c(1:7)]
+```
+
+## Cleaning the data / Preparation
+In this dataset there are indeed a lot of **NA** values. We could figure this fact by inspecting the occurance of the **NA** values in a plot. Code inside **for-loop** is able to check how many columns in the dataset have an high % of NA-values inside them.
+It is now clear that when NAs occur in a variable of the dataset, then almost the entire column is full of NAs: infact, the edge is at 97%.
+
+```{r, eval=FALSE}
+# checking how many columns have NA-value inside them
+t <- seq(0, 0.99, by=0.01)
+for(i in 1:length(t)){
+    cat(t[i]*100, "%:", sep="")
+    cat(length(which(colSums(is.na(training))>t[i]*nrow(training))), \n)
+}
+```
+
+We can inspect it by using a scatter plot.
+
+```{r}
+# inspecting results, 97% is the cut-off
+length(which(colSums(is.na(training))>0.97*nrow(training)))
+length(which(colSums(is.na(training))>0.98*nrow(training)))
+plot(colSums(is.na(training)),xlab="Index of the variable", ylab="Frequency of NA-values", pch=18, col="blue", cex=1.1)
+```
+
+As we can see from the plot above, when **NA** values are present in a column, then the whole column is filled with at least 97% with **NA** values. These columns are not helpful to the scope of this project, so I decided to cut them off.
+
+```{r}
+col_index <- which(colSums(is.na(training))>0.97*nrow(training))
+training <- training[, -col_index]
+testing <- testing[, -col_index]
+```
+
+## Building predictive model / Machine Learning Algorithm
+To build a predictive model, I must subset the training dataset into two subset, one called **subTrain** and the other **subTest**: the first one will be the dataset where model is trained, the second one is the validation set.
+
+```{r}
+# setting seed to be reproducible
+set.seed(98765)
+
+# create a data partition - subTrain and subTest
+index <- createDataPartition(training$classe, p=0.70, list=F)
+subTrain <- training[index, ]
+subTest <- training[-index, ]
+```
+
+I have also decided to perform Cross-Validation using **Random forest** method:
+```{r, eval = FALSE}
+# I am not evaluating the model for time-reason: model has been already calculated and saved in the workspace called "PML_model.RData". 
+set.seed(6789)
+
+# setting parameters
+control <- trainControl(method="cv", number=5, repeats=5)
+model <- train(classe ~ ., data = subTrain, method = "rf", trControl=control)
+```
+
+```{r}
+# loading workspace
+load("C:/R/Practical Machine Learning/PML_model.RData")
+model$finalModel
+```
+
+Applying this model to the test partition of the original dataset I can predict the variable **classe** and check it with his original value:
+```{r}
+prediction <- predict(model, subTest)
+head(prediction)
+```
+
+I use confusion matrix to check the performances of the developed model:
+```{r}
+confusionMatrix(subTest$classe, prediction)
+```
+
+### Addictional rappresentation
+In this chunk I'll use rattle to construct a comprehensible random tree visualization.
+```{r}
+model2 <- train(classe ~ ., data = subTrain, method = "rpart", trControl=control)
+fancyRpartPlot(model2$finalModel)
+```
+
+## Results
+As we can see from the results above, accuracy is above 0.99 with 95% CI (0.9978, 0.9996), that denotes really high confidence.
+
+## Predicting new data: Testing
+In this section I'll use the results of the MLA above on the original **testing** set: this 20 different cases were not classified.
+```{r}
+predTest <- predict(model, newdata = testing)
+```
+
+Following function takes as input the results of the prediction (20 different results as in testing) and save it on .txt files.
+```{r,eval=FALSE}
+# creating .txt files needed for coursera class
+pml_write_files = function(x){
++     n = length(x)
++     for(i in 1:n){
++         filename = paste0("problem_id_",i,".txt")
++         write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
++     }
++ }
+pml_write_files(predTest)
+```
